@@ -1,0 +1,13 @@
+services:
+  bot:
+    image: discord_tunes
+    environment:
+      - PREFIX=+
+      - TOKEN_FILE=/run/secrets/toksec
+    secrets:
+      - source: toksec
+        target: toksec 
+
+secrets:
+  toksec:
+    file: ./token.hide
