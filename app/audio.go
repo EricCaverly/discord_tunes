@@ -1,46 +1,67 @@
 package main
 
 import (
-	"bytes"
-
-	"github.com/go-audio/audio"
-	"github.com/go-audio/wav"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"os/exec"
 )
 
 
-func read_m4a(data []byte) (*audio.IntBuffer, error) {
-    decoder := wav.NewDecoder(bytes.NewReader(data))
-    buf, err := decoder.FullPCMBuffer()
+func convert_m4a_pcm(audio_stream io.ReadCloser) (io.ReadCloser, error) {
+    cmd := fmt.Sprintf("ffmpeg -i pipe:.m4a -f s16le -ar 48000 -ac 2 pipe:1")
+    c := exec.Command("bash", "-c", cmd)
+    c.Stderr = os.Stderr
+    cstdin, err := c.StdinPipe()
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("getting stdin: %s", err.Error())
     }
-    return buf, nil
+    cstdout, err := c.StdoutPipe()
+    if err != nil {
+        return nil, fmt.Errorf("getting stdout: %s", err.Error())
+    }
+    log.Printf("got pipes\n")
+
+    err = c.Start()
+    if err != nil {
+        return nil, fmt.Errorf("ffmpeg: %s\n", err.Error())
+    }
+    log.Printf("started command\n")
+
+    go func() {
+        io.Copy(cstdin, audio_stream)
+    }()
+
+    
+    return cstdout, nil
+
 }
 
 
-func convert_to_opus(pcm *audio.IntBuffer, sampleRate int) ([]byte, error) {
+func pcm_bts(byte_stream io.ReadCloser, short_chan chan []int16) (error) {
+    var reading bool = true
 
-    
+    defer close(short_chan)
+    defer byte_stream.Close()
 
-    return nil, nil
+    for reading {
+        buf := make([]int16, audio_frame_size*audio_chan)
+
+        err := binary.Read(byte_stream, binary.LittleEndian, &buf)
+
+        if err == io.EOF {
+            break
+        } else if err == io.ErrUnexpectedEOF {
+            reading = false
+        } else if err != nil {
+            return err
+        }
+
+        short_chan <- buf
+    }
+
+    return nil
 }
 
-
-
-    /* Download the video - save for later download command 
-    file, err := os.OpenFile("output/out.m4a", os.O_CREATE | os.O_WRONLY, 0664)
-    if err != nil {
-        return err
-    }
-    
-    log.Printf("writing to file\n")
-
-    _, err = file.Write(audio_contents)
-    if err != nil {
-        return err
-    }
-
-    file.Close()
-
-    log.Printf("done writing to file\n")
-    */

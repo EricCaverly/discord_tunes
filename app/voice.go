@@ -1,16 +1,20 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
-	"io"
 	"log"
-	"os"
-	"os/exec"
 	"sync"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/kkdai/youtube/v2"
+	"layeh.com/gopus"
 )
+
+type Call struct {
+    vc *discordgo.VoiceConnection
+    playing bool
+    queue []*youtube.Video 
+}
 
 var (
     calls = map[string]*discordgo.VoiceConnection{}
@@ -20,7 +24,9 @@ var (
 const (
     audio_chan int = 2
     audio_frame_size int = 960
-    sample_rate int = 48000
+    audio_sample_rate int = 48000
+    audio_bitrate int = 64
+    audio_max_bytes int = (audio_frame_size * audio_chan) * 2
 )
 
 func vc_from_message(s *discordgo.Session, m *discordgo.MessageCreate) (string, string, error)   {
@@ -105,6 +111,75 @@ func play_audio(guild_id string, arg string) error {
         return err
     }
 
+    log.Printf("got audio stream\n")
+
+    // Use FFMpeg to convert the M4A AAC encoded file into raw PCM data
+    pcm_data_bytes, err := convert_m4a_pcm(audio_stream)
+    if err != nil {
+        return fmt.Errorf("converting m4a -> pcm: %s", err.Error())
+    }
+
+    log.Printf("started ffmpeg\n")
+
+    bts_errchan := make(chan error)
+    eas_errchan := make(chan error)
+    // Get bytes from output of command, turn into int16 slices
+    short_chan := make(chan []int16, 10) 
+    go func() {
+        bts_errchan <- pcm_bts(pcm_data_bytes, short_chan)
+    }()
+
+    opus_enc, err := gopus.NewEncoder(audio_sample_rate, audio_chan, gopus.Voip)
+    if err != nil {
+        return fmt.Errorf("unable to make encoder: %s", err.Error())
+    }
+    opus_enc.SetBitrate(audio_bitrate * 1000)
+
+    call.Speaking(true)
+
+    go func() {
+        for {
+            pcm, ok := <- short_chan
+            if !ok {
+                eas_errchan <- nil
+                return
+            }
+
+            opus, err := opus_enc.Encode(pcm, audio_frame_size, audio_max_bytes)
+            if err != nil {
+                eas_errchan <- err
+                return
+            }
+
+            call.OpusSend <- opus
+        }
+    }()
+
+    if err = <- bts_errchan; err != nil {
+        return err
+    }
+
+    if err = <- eas_errchan; err != nil {
+        return err
+    }
+
+    err = call.Speaking(false)
+    if err != nil {
+        log.Printf("error stopping speaking\n")
+    }
+
+    return nil
+}
+
+
+
+
+
+
+
+
+
+    /*
     // Open a file
     var fn string = "output/testfile"
     fout, err := os.OpenFile(fn+".m4a", os.O_CREATE | os.O_WRONLY, 0664)
@@ -153,45 +228,4 @@ func play_audio(guild_id string, arg string) error {
         call.OpusSend <- opus_data
 
     }
-
-    err = call.Speaking(false)
-    if err != nil {
-        log.Printf("error stopping speaking\n")
-    }
-
-    return nil
-}
-
-func convert_m4a_opus() {
-    
-}
-/*
-
-    err = call.Speaking(true)
-    if err != nil {
-        return err
-    }
-    
-    mpeg_buf, err := mpeg.NewBuffer(audio_stream)
-    if err != nil {
-        return fmt.Errorf("unable to create mpeg buffer: %s", err.Error())
-    }
-    mpeg_buf.SetLoadCallback(mpeg_buf.LoadReaderCallback)
-    
-    mpeg_audio := mpeg.NewAudio(mpeg_buf)
-    mpeg_audio.Rewind()
-
-    log.Printf("samplerate: %v\n", mpeg_audio.Samplerate())
-
-    pcm_data := []int16{}
-    for !mpeg_audio.HasEnded() {
-        samples := mpeg_audio.Decode()
-        if samples == nil {
-            log.Printf("samples is nil\n")
-            break
-        }
-
-        pcm_data = append(pcm_data, samples.S16...)
-    }
-
-*/
+    */

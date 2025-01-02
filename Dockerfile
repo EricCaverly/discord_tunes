@@ -6,8 +6,6 @@ COPY ./app .
 
 RUN apt-get update -y && apt-get install -y ffmpeg bash
 
-RUN go install github.com/bwmarrin/dca/cmd/dca@latest
-
 RUN go mod download
 
 RUN go build -o ./discord_app
