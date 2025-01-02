@@ -22,7 +22,7 @@ func get_file(s *discordgo.Session, channel_id string, argument string) {
     s.ChannelFileSend(channel_id, "song.m4a", stream)
 }
 
-func get_audio_stream(argument string) (io.ReadCloser, error) {
+func get_video(argument string, client *youtube.Client) (*youtube.Video, error) {
     var id string
     var err error
 
@@ -34,18 +34,24 @@ func get_audio_stream(argument string) (io.ReadCloser, error) {
     } else {
     }
     
-    client := youtube.Client{}
     video, err := client.GetVideo(id)
     if err != nil {
         return nil, err
     }
 
+    return video, nil
+    
+}
+
+func get_audio_stream(argument string) (io.ReadCloser, error) {
+    client := youtube.Client{}
+
+    video, err := get_video(argument, &client)
+
     formats := video.Formats.WithAudioChannels()
     if len(formats) < 1 {
         return nil, fmt.Errorf("no formats returned")
     }
-
-    log.Printf("The format chosen is %#v\n", formats[0])
 
     stream, _, err := client.GetStream(video, &formats[0])
     return stream, err

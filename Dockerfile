@@ -1,8 +1,12 @@
-FROM golang:1.23.4-alpine3.21
+FROM golang:1.23.4
 
 WORKDIR /app
 
 COPY ./app .
+
+RUN apt-get update -y && apt-get install -y ffmpeg bash
+
+RUN go install github.com/bwmarrin/dca/cmd/dca@latest
 
 RUN go mod download
 

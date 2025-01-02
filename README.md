@@ -4,6 +4,13 @@ A simple streaming bot for discord. For individual use, please create your own d
 
 ## TODO
 
-- [ ] Able to join and leave voice calls in discord
-- [ ] Able to fetch a Youtube link and stream audio into the voice call
-- [ ] Web GUI?
+- [x] Able to join and leave voice calls in discord
+- [ ] Youtube searching
+- [x] Able to fetch audio stream from Youtube link
+- [x] File downloads
+- [x] stream audio into the voice call
+- [ ] reliability (fix all the nil pointer derefs 😁)
+- [ ] actual concurrency with playing in voice calls
+- [ ] pause
+- [ ] queue
+- [ ] skip 

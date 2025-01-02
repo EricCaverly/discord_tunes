@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"os/exec"
 	"sync"
 
 	"github.com/bwmarrin/discordgo"
@@ -12,6 +15,12 @@ import (
 var (
     calls = map[string]*discordgo.VoiceConnection{}
     calls_mutx sync.Mutex
+)
+
+const (
+    audio_chan int = 2
+    audio_frame_size int = 960
+    sample_rate int = 48000
 )
 
 func vc_from_message(s *discordgo.Session, m *discordgo.MessageCreate) (string, string, error)   {
@@ -91,27 +100,98 @@ func play_audio(guild_id string, arg string) error {
     }
 
     // Obtain youtube stream
-    audio_stream, err := get_audio_stream(arg)
+    audio_stream, err := get_audio_stream(arg)    
     if err != nil {
         return err
     }
 
-    audio_contents, err := io.ReadAll(audio_stream)
+    // Open a file
+    var fn string = "output/testfile"
+    fout, err := os.OpenFile(fn+".m4a", os.O_CREATE | os.O_WRONLY, 0664)
     if err != nil {
-        return err
+        return fmt.Errorf("unable to open m4a file: %s", err.Error())
     }
 
-    pcm_audio, err := read_m4a(audio_contents)
+    // Write to the file
+    io.Copy(fout, audio_stream)
+
+    // Convert using FFMPEG
+    cmd := fmt.Sprintf("ffmpeg -i %s.m4a -f s16le -ar 48000 -ac 2 pipe:1 | dca > %s.dca", fn, fn)
+    c := exec.Command("bash", "-c", cmd)
+    err = c.Run()
+    if err != nil {
+        return fmt.Errorf("ffmpeg: %s\n", err.Error())
+    }
+    
+
+    dca_file, err := os.Open(fn+".dca")
+    if err != nil {
+        return fmt.Errorf("unable to open dca file: %s", err.Error())
+    }
+
+    var reading bool = true
+    var opuslen int16
+    for reading {
+ 
+        err = binary.Read(dca_file, binary.LittleEndian, &opuslen)
+        if err != nil {
+            if err == io.EOF {
+                break
+            } else if err == io.ErrUnexpectedEOF {
+                reading = false
+            } else {
+                return fmt.Errorf("error while reading dca file: %s", err.Error())
+            }
+        }
+
+        opus_data := make([]byte, opuslen)
+        err = binary.Read(dca_file, binary.LittleEndian, &opus_data)
+        if err != nil {
+            return fmt.Errorf("error while reading data from dca file: %s\n", err.Error())
+        }
+
+        call.OpusSend <- opus_data
+
+    }
+
+    err = call.Speaking(false)
+    if err != nil {
+        log.Printf("error stopping speaking\n")
+    }
+
+    return nil
+}
+
+func convert_m4a_opus() {
+    
+}
+/*
+
+    err = call.Speaking(true)
     if err != nil {
         return err
     }
     
-    fmt.Printf("%v", pcm_audio.NumFrames())
+    mpeg_buf, err := mpeg.NewBuffer(audio_stream)
+    if err != nil {
+        return fmt.Errorf("unable to create mpeg buffer: %s", err.Error())
+    }
+    mpeg_buf.SetLoadCallback(mpeg_buf.LoadReaderCallback)
+    
+    mpeg_audio := mpeg.NewAudio(mpeg_buf)
+    mpeg_audio.Rewind()
 
-    call.Speaking(true)
+    log.Printf("samplerate: %v\n", mpeg_audio.Samplerate())
 
+    pcm_data := []int16{}
+    for !mpeg_audio.HasEnded() {
+        samples := mpeg_audio.Decode()
+        if samples == nil {
+            log.Printf("samples is nil\n")
+            break
+        }
 
-    call.Speaking(false)
+        pcm_data = append(pcm_data, samples.S16...)
+    }
 
-    return nil
-}
+*/

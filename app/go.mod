@@ -13,6 +13,7 @@ require (
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
 	github.com/google/pprof v0.0.0-20241203143554-1e3fdc7de467 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
+	github.com/jonas747/ogg v0.0.0-20161220051205-b4f6f4cf3757 // indirect
 	github.com/kkdai/youtube/v2 v2.10.2 // indirect
 	github.com/klauspost/compress v1.10.4 // indirect
 	github.com/lithdew/bytesutil v0.0.0-20200409052507-d98389230a59 // indirect
@@ -25,4 +26,5 @@ require (
 	golang.org/x/sync v0.9.0 // indirect
 	golang.org/x/sys v0.27.0 // indirect
 	golang.org/x/text v0.20.0 // indirect
+	layeh.com/gopus v0.0.0-20210501142526-1ee02d434e32 // indirect
 )
