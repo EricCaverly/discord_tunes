@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"sync"
-	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -91,11 +91,25 @@ func play_audio(guild_id string, arg string) error {
     }
 
     // Obtain youtube stream
-    get_audio(arg)
+    audio_stream, err := get_audio_stream(arg)
+    if err != nil {
+        return err
+    }
+
+    audio_contents, err := io.ReadAll(audio_stream)
+    if err != nil {
+        return err
+    }
+
+    pcm_audio, err := read_m4a(audio_contents)
+    if err != nil {
+        return err
+    }
+    
+    fmt.Printf("%v", pcm_audio.NumFrames())
 
     call.Speaking(true)
 
-    time.Sleep(5 * time.Second)
 
     call.Speaking(false)
 

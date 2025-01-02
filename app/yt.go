@@ -1,50 +1,53 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"strings"
-	"time"
+
+	"github.com/bwmarrin/discordgo"
+	"github.com/kkdai/youtube/v2"
 )
 
+func get_file(s *discordgo.Session, channel_id string, argument string) {
 
-func get_audio(argument string) {
-    var url string
+    stream, err := get_audio_stream(argument)
+    if err != nil {
+        log.Printf("failed to get audio stream: %s\n", err)
+        return
+    }
+
+    s.ChannelMessageSend(channel_id, "Here is the song:")
+    s.ChannelFileSend(channel_id, "song.m4a", stream)
+}
+
+func get_audio_stream(argument string) (io.ReadCloser, error) {
+    var id string
+    var err error
 
     if strings.HasPrefix(argument, "http://") || strings.HasPrefix(argument, "https://") {
-        url = argument
+        id, err = youtube.ExtractVideoID(argument)
+        if err != nil {
+            return nil, err
+        }
     } else {
-        // Search Logic Here
-    }
-
-    client := &http.Client {
-        Timeout: 30 * time.Second,
-    }
-
-    req, err := http.NewRequest("GET", url, nil)
-    if err != nil {
-        return
-    }
-
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-    
-
-    resp, err := client.Do(req)
-    if err != nil {
-        log.Printf("Error performing request\n")
-        return
     }
     
-    body, err := io.ReadAll(resp.Body)
+    client := youtube.Client{}
+    video, err := client.GetVideo(id)
     if err != nil {
-        log.Printf("Error reading body\n")
-        return
+        return nil, err
     }
-    resp.Body.Close()
 
-    log.Printf("%#v\n", string(body))
+    formats := video.Formats.WithAudioChannels()
+    if len(formats) < 1 {
+        return nil, fmt.Errorf("no formats returned")
+    }
 
+    log.Printf("The format chosen is %#v\n", formats[0])
+
+    stream, _, err := client.GetStream(video, &formats[0])
+    return stream, err
 
 }   

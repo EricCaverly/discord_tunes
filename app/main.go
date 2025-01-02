@@ -93,6 +93,8 @@ func message_create(s *discordgo.Session, m *discordgo.MessageCreate) {
         if err != nil {
             log.Printf("error playing: %s\n", err.Error())
         }
+    case "dl":
+        get_file(s, m.ChannelID, cmd_sections[1]) 
     case "skip":
     case "pause":
     default:
