@@ -9,8 +9,7 @@ A simple streaming bot for discord. For individual use, please create your own d
 - [x] Able to fetch audio stream from Youtube link
 - [x] File downloads
 - [x] stream audio into the voice call
-- [ ] reliability (fix all the nil pointer derefs 😁)
-- [ ] actual concurrency with playing in voice calls
-- [ ] pause
-- [ ] queue
-- [ ] skip 
+- [x] reliability (fix all the nil pointer derefs 😁)
+- [x] actual concurrency with playing in voice calls
+- [x] queue
+- [x] skip 

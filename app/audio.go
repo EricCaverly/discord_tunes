@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -10,10 +11,18 @@ import (
 )
 
 
-func convert_m4a_pcm(audio_stream io.ReadCloser) (io.ReadCloser, error) {
+func convert_m4a_pcm(audio_stream io.ReadCloser, ctx context.Context) (io.ReadCloser, error) {
+    // Build the FFmpeg command using pipes for stdin and stdout
+    // This removes the need to write any data to a file on the disk, as all audio data gets sent / recevied directrly between this program and ffmpeg
     cmd := fmt.Sprintf("ffmpeg -i pipe:.m4a -f s16le -ar 48000 -ac 2 pipe:1")
-    c := exec.Command("bash", "-c", cmd)
+
+    // Build the command with a cancellable context
+    c := exec.CommandContext(ctx, "bash", "-c", cmd)
+
+    // Stderr for ffmpeg error messages
     c.Stderr = os.Stderr
+    
+    // Obtain the pipes that this program will communicate with
     cstdin, err := c.StdinPipe()
     if err != nil {
         return nil, fmt.Errorf("getting stdin: %s", err.Error())
@@ -24,42 +33,66 @@ func convert_m4a_pcm(audio_stream io.ReadCloser) (io.ReadCloser, error) {
     }
     log.Printf("got pipes\n")
 
+    // Start the command without waiting for it to complete
     err = c.Start()
     if err != nil {
         return nil, fmt.Errorf("ffmpeg: %s\n", err.Error())
     }
     log.Printf("started command\n")
 
+    // In another thread, copy audio stream from youtube into ffmpeg's input directly
     go func() {
         io.Copy(cstdin, audio_stream)
     }()
-
     
+    // Return the stdout reader
     return cstdout, nil
 
 }
 
 
-func pcm_bts(byte_stream io.ReadCloser, short_chan chan []int16) (error) {
+func pcm_bts(byte_stream io.ReadCloser, short_chan chan []int16, guild_id string) (error) {
     var reading bool = true
 
-    defer close(short_chan)
-    defer byte_stream.Close()
-
+    // While we should still be reading from ffmpeg
     for reading {
-        buf := make([]int16, audio_frame_size*audio_chan)
+        // Make sure this function has not been cancelled
+        select {
+        case <- calls[guild_id].bts_ctx.Done():
+            log.Printf("pcm cancelled\n")
+            return nil
+        default:
+            // Make a buffer for audio data that is just the right amount of size for the amount of PCM data that can be encoded into an OPUS frame
+            buf := make([]int16, audio_frame_size*audio_chan)
 
-        err := binary.Read(byte_stream, binary.LittleEndian, &buf)
+            // Read output from ffmpeg into the buffer
+            err := binary.Read(byte_stream, binary.LittleEndian, &buf)
 
-        if err == io.EOF {
-            break
-        } else if err == io.ErrUnexpectedEOF {
-            reading = false
-        } else if err != nil {
-            return err
+            // if we got to EOF, break out of the loop
+            if err == io.EOF {
+                break
+
+            // If we got unexpected EOF, still some data to send, so just dont repeat again
+            } else if err == io.ErrUnexpectedEOF {
+                reading = false
+
+            // otherwise, there was an actual problem
+            } else if err != nil {
+                return err
+            }
+
+            // Since the short_chan buffer can become full, another select is needed here so that this thread
+            // does not get stuck and the skip / dc commands can work properly
+            select {
+            // Pass the buffer data into the short_chan channel
+            case short_chan <- buf:
+                continue
+            // Check if this thread was cancelled via context
+            case <- calls[guild_id].bts_ctx.Done():
+                log.Printf("cancelled in second select\n")
+                return nil
+            }
         }
-
-        short_chan <- buf
     }
 
     return nil

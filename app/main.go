@@ -86,17 +86,45 @@ func message_create(s *discordgo.Session, m *discordgo.MessageCreate) {
     case "dc":
         leave_voice(guild_id)
     case "play":
+        // Make sure the user has only put the play command and one argument
+        if len(cmd_sections) != 2 {
+            s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("invalid syntax: use `%cplay [link]`", settings.cmd_prefix))
+            return
+        }
+        // Make sure the call exists, if it doesn't, try to join the voice channel
         if _, exists := calls[guild_id]; !exists {
             join_voice(s, guild_id, vc_id)
         }
-        err := play_audio(guild_id, cmd_sections[1])
+
+        // Call the play audio function
+        err := play_audio(s, m.ChannelID, guild_id, cmd_sections[1])
         if err != nil {
             log.Printf("error playing: %s\n", err.Error())
         }
     case "dl":
+        // Make sure command is formatted correctly
+        if len(cmd_sections) != 2 {
+            s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("invalid syntax: use `%cdl [link]`", settings.cmd_prefix))
+            return
+        }
+
+        // Get the file and upload it to discord
         get_file(s, m.ChannelID, cmd_sections[1]) 
     case "skip":
-    case "pause":
+        // Make sure the bot is in a call
+        _, exists := calls[guild_id]
+        if !exists {
+            s.ChannelMessageSend(m.ChannelID, "I'm not in a call")
+            return
+        }
+
+        // Cancel all child threads that are being used to play the current song
+        calls[guild_id].ffm_cancel()
+        calls[guild_id].eas_cancel()
+        calls[guild_id].bts_cancel()
+        // From here, the existing play_audio thread will do the rest
+
+        log.Printf("skip command executed\n")
     default:
         s.ChannelMessageSend(m.ChannelID, "Unknown command")
     }
@@ -109,7 +137,7 @@ func load_settings() (Settings, error) {
     // Read CMD Prefix setting
     prefix_s, set := os.LookupEnv("PREFIX")
     if !set {
-        s.cmd_prefix = '!'
+        s.cmd_prefix = '+'
     } else if len(prefix_s) > 1 {
         return s, fmt.Errorf("invalid cmd prefix: must be a single character")
     } else {

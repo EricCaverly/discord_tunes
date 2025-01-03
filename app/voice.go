@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/kkdai/youtube/v2"
@@ -13,11 +15,17 @@ import (
 type Call struct {
     vc *discordgo.VoiceConnection
     playing bool
-    queue []*youtube.Video 
+    bts_ctx context.Context
+    bts_cancel context.CancelFunc
+    eas_ctx context.Context
+    eas_cancel context.CancelFunc
+    ffm_ctx context.Context
+    ffm_cancel context.CancelFunc
+    queue []*youtube.Video
 }
 
 var (
-    calls = map[string]*discordgo.VoiceConnection{}
+    calls = map[string]Call{}
     calls_mutx sync.Mutex
 )
 
@@ -33,7 +41,7 @@ func vc_from_message(s *discordgo.Session, m *discordgo.MessageCreate) (string, 
     // Text Channel
     c, err := s.State.Channel(m.ChannelID)
     if err != nil {
-    return "", "", fmt.Errorf("could not find text channel message was sent in")
+        return "", "", fmt.Errorf("could not find text channel message was sent in")
     }
 
     // Find guild
@@ -53,19 +61,28 @@ func vc_from_message(s *discordgo.Session, m *discordgo.MessageCreate) (string, 
 }
 
 func join_voice(s *discordgo.Session, guild_id string, vc_id string) error {
+    // Check if the bot is already in a call
     _, exists := calls[guild_id]
     if exists {
+        // If it is, leave the old call
         log.Printf("already in a voice call, leaving old one\n")
         leave_voice(guild_id)        
     }
     calls_mutx.Lock()
 
+    // Join the new voice channel
     call, err := s.ChannelVoiceJoin(guild_id, vc_id, false, true) 
     if err != nil {
         calls_mutx.Unlock()
         return fmt.Errorf("unable to join voice call: %s\n", err.Error())
     }
-    calls[guild_id] = call
+
+    // Create a new call object in the global calls map
+    calls[guild_id] = Call{
+        vc: call,
+        playing: false,
+        queue: []*youtube.Video{},
+    }
     calls_mutx.Unlock()
 
     log.Printf("Joined a voice call in %s\n", guild_id)
@@ -74,19 +91,28 @@ func join_voice(s *discordgo.Session, guild_id string, vc_id string) error {
 
 
 func leave_voice(guild_id string) {
-    calls_mutx.Lock()
 
     // Make sure the call actually exists
-    _, exists := calls[guild_id]
+    call, exists := calls[guild_id]
     if !exists {
-        calls_mutx.Unlock()
         return
     }
 
+    // Cancel child threads of call
+    call.ffm_cancel()
+    call.bts_cancel()
+    call.eas_cancel()
+
+    for calls[guild_id].playing {
+        // Wait until play_audio is done
+        time.Sleep(10 * time.Millisecond) 
+    }
+
     // Disconnect, close channel, and close web socket
-    calls[guild_id].Disconnect()
-    close(calls[guild_id].OpusSend)
-    calls[guild_id].Close()
+    calls_mutx.Lock()
+    calls[guild_id].vc.Disconnect()
+    close(calls[guild_id].vc.OpusSend)
+    calls[guild_id].vc.Close()
 
     // Delete the entry from the hashmap
     delete(calls, guild_id)
@@ -96,136 +122,161 @@ func leave_voice(guild_id string) {
 }
 
 
-func play_audio(guild_id string, arg string) error {
+func play_audio(s *discordgo.Session, txt_chan string, guild_id string, arg string) error {
     // Get current call, make sure in a call
-    var call *discordgo.VoiceConnection
+    calls_mutx.Lock()
+    var call Call
     var exists bool
     call, exists = calls[guild_id]
     if !exists {
         return fmt.Errorf("not in a voice call")
     }
 
-    // Obtain youtube stream
-    audio_stream, err := get_audio_stream(arg)    
+    // Try to find the video specified in the command
+    vid, err := get_video(arg)
     if err != nil {
+        s.ChannelMessageSend(txt_chan, "could not find video")
         return err
     }
+    
+    // Add the found video into the video queue
+    call.queue = append(call.queue, vid) 
+    calls[guild_id] = call
+    log.Printf("added song to queue: '%s'\n", vid.ID)
+    s.ChannelMessageSend(txt_chan, fmt.Sprintf("Added '%s' to the queue", vid.Title))
 
-    log.Printf("got audio stream\n")
-
-    // Use FFMpeg to convert the M4A AAC encoded file into raw PCM data
-    pcm_data_bytes, err := convert_m4a_pcm(audio_stream)
-    if err != nil {
-        return fmt.Errorf("converting m4a -> pcm: %s", err.Error())
+    // If this sessions is already playing music, stop here, we dont want the bot to play over itself
+    if call.playing {
+        calls_mutx.Unlock()
+        return nil
     }
 
-    log.Printf("started ffmpeg\n")
-
-    bts_errchan := make(chan error)
-    eas_errchan := make(chan error)
-    // Get bytes from output of command, turn into int16 slices
-    short_chan := make(chan []int16, 10) 
-    go func() {
-        bts_errchan <- pcm_bts(pcm_data_bytes, short_chan)
-    }()
-
-    opus_enc, err := gopus.NewEncoder(audio_sample_rate, audio_chan, gopus.Voip)
-    if err != nil {
-        return fmt.Errorf("unable to make encoder: %s", err.Error())
-    }
-    opus_enc.SetBitrate(audio_bitrate * 1000)
-
-    call.Speaking(true)
-
-    go func() {
-        for {
-            pcm, ok := <- short_chan
-            if !ok {
-                eas_errchan <- nil
-                return
-            }
-
-            opus, err := opus_enc.Encode(pcm, audio_frame_size, audio_max_bytes)
-            if err != nil {
-                eas_errchan <- err
-                return
-            }
-
-            call.OpusSend <- opus
+    // For each song in the queue
+    for len(calls[guild_id].queue) > 0 {
+        // Create a new opus encoder that econdes pcm data into opus packets for discord
+        opus_enc, err := gopus.NewEncoder(audio_sample_rate, audio_chan, gopus.Voip)
+        if err != nil {
+            return fmt.Errorf("unable to make encoder: %s", err.Error())
         }
-    }()
+        opus_enc.SetBitrate(audio_bitrate * 1000)
+        
+        // Set playing to true
+        call.playing = true
 
-    if err = <- bts_errchan; err != nil {
-        return err
-    }
+        // Tell discord we want to start speaking
+        call.vc.Speaking(true)
 
-    if err = <- eas_errchan; err != nil {
-        return err
-    }
+        // Set contexts to new contexts with cancel
+        call.bts_ctx, call.bts_cancel = context.WithCancel(context.Background())
+        call.eas_ctx, call.eas_cancel = context.WithCancel(context.Background())
+        call.ffm_ctx, call.ffm_cancel = context.WithCancel(context.Background())
+        
+        // Update map with new call settings
+        calls[guild_id] = call
+        calls_mutx.Unlock()
+        
+        // Control variables for multi threading
+        var wg sync.WaitGroup 
 
-    err = call.Speaking(false)
-    if err != nil {
-        log.Printf("error stopping speaking\n")
+        // Obtain youtube stream
+        audio_stream, err := get_audio_stream(calls[guild_id].queue[0])    
+        if err != nil {
+            return err
+        }
+        
+        // Inform the users what is up next
+        s.ChannelMessageSend(txt_chan, fmt.Sprintf("Now Playing: %s", calls[guild_id].queue[0].Title)) 
+
+        // Use FFMpeg to convert the M4A AAC encoded file into raw PCM data
+        pcm_data_bytes, err := convert_m4a_pcm(audio_stream, calls[guild_id].ffm_ctx)
+        if err != nil {
+            return fmt.Errorf("converting m4a -> pcm: %s", err.Error())
+        }
+
+        // Get bytes from output of command, turn into int16 slices and send to encoding thread
+        short_chan := make(chan []int16, 20) 
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            err := pcm_bts(pcm_data_bytes, short_chan, guild_id)
+            if err != nil {
+                log.Printf("error while doing bts: %s\n", err.Error())
+            }   
+            log.Printf("exited bts loop")
+        }()
+
+        // Encode PCM to Opus Thread
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            for calls[guild_id].playing {
+                select {
+                case <- calls[guild_id].eas_ctx.Done():
+                    log.Printf("eas cancelled\n")
+                    return
+                default:
+                    // Get PCM data from FFMPEG in appropriately sized chunks to be converted to OPUS
+                    pcm, ok := <- short_chan
+                    if !ok {
+                        return
+                    }
+
+                    // Encode into opus
+                    opus, err := opus_enc.Encode(pcm, audio_frame_size, audio_max_bytes)
+                    if err != nil {
+                        log.Printf("error while doing eas: %s\n", err.Error())
+                        return
+                    }
+
+                    // Send to discord
+                    call.vc.OpusSend <- opus
+                }
+            }
+
+            log.Printf("exited eas loop\n")
+        }()
+
+        // Wait for byte-to-short and encode-and-send threads to exit, either gracefully or failure
+        wg.Wait()
+        log.Printf("wait group complete\n")
+
+        // Close readers and channels for getting / encoding audio
+        // Leaves discord send chan open for next song
+        audio_stream.Close()
+        pcm_data_bytes.Close()
+        close(short_chan)
+
+        // Lockcalls
+        calls_mutx.Lock()
+        
+        // Check if this call still exists
+        call, exists := calls[guild_id]
+        if !exists {
+            calls_mutx.Unlock()
+            return nil
+        }
+
+        // Tell discord we are done speaking
+        call.vc.Speaking(false)
+
+        // Remove from the queue
+        call = calls[guild_id]
+        if len(call.queue) > 0 {
+            call.queue = call.queue[1:]
+        } else {
+            call.queue = []*youtube.Video{}
+        }
+        
+        // We are no longer playing
+        call.playing = false
+
+        // Update calls map with new settings
+        calls[guild_id] = call
+
+        calls_mutx.Unlock()
+
+        log.Printf("song complete / skipped / dc called - removed song from queue")
     }
 
     return nil
 }
-
-
-
-
-
-
-
-
-
-    /*
-    // Open a file
-    var fn string = "output/testfile"
-    fout, err := os.OpenFile(fn+".m4a", os.O_CREATE | os.O_WRONLY, 0664)
-    if err != nil {
-        return fmt.Errorf("unable to open m4a file: %s", err.Error())
-    }
-
-    // Write to the file
-    io.Copy(fout, audio_stream)
-
-    // Convert using FFMPEG
-    cmd := fmt.Sprintf("ffmpeg -i %s.m4a -f s16le -ar 48000 -ac 2 pipe:1 | dca > %s.dca", fn, fn)
-    c := exec.Command("bash", "-c", cmd)
-    err = c.Run()
-    if err != nil {
-        return fmt.Errorf("ffmpeg: %s\n", err.Error())
-    }
-    
-
-    dca_file, err := os.Open(fn+".dca")
-    if err != nil {
-        return fmt.Errorf("unable to open dca file: %s", err.Error())
-    }
-
-    var reading bool = true
-    var opuslen int16
-    for reading {
- 
-        err = binary.Read(dca_file, binary.LittleEndian, &opuslen)
-        if err != nil {
-            if err == io.EOF {
-                break
-            } else if err == io.ErrUnexpectedEOF {
-                reading = false
-            } else {
-                return fmt.Errorf("error while reading dca file: %s", err.Error())
-            }
-        }
-
-        opus_data := make([]byte, opuslen)
-        err = binary.Read(dca_file, binary.LittleEndian, &opus_data)
-        if err != nil {
-            return fmt.Errorf("error while reading data from dca file: %s\n", err.Error())
-        }
-
-        call.OpusSend <- opus_data
-
-    }
-    */
