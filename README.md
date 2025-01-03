@@ -21,6 +21,8 @@ A simple streaming bot for discord. For individual use, please create your own d
 
 You should now have the bot showing as online in your discord server, and it should be able to join calls / play audio.
 
+Type `+help` to get a list of commands at any time.
+
 ## Features
 - [x] Multi-server functionality
 - [x] Able to join and leave voice calls in discord
@@ -35,6 +37,7 @@ You should now have the bot showing as online in your discord server, and it sho
 
 ## Commands
 
+- `+help` -> Display command list
 - `+join` -> Joins the voice call of whoever sent the command
 - `+dc` -> Leaves the current voice call of the server if there is one
 - `+play [link]` -> Plays the specified youtube link
