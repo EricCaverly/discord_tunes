@@ -125,6 +125,19 @@ func message_create(s *discordgo.Session, m *discordgo.MessageCreate) {
         // From here, the existing play_audio thread will do the rest
 
         log.Printf("skip command executed\n")
+    case "q":
+        // Make sure the bot is in a call
+        _, exists := calls[guild_id]
+        if !exists {
+            s.ChannelMessageSend(m.ChannelID, "I'm not in a call")
+            return
+        }
+
+        var list string
+        for _, vid := range calls[guild_id].queue {
+            list+=fmt.Sprintf("\n(%s - [%v])", vid.Title, vid.Duration)
+        }
+        s.ChannelMessageSend(m.ChannelID, "Queue (including currently playing): "+list)
     default:
         s.ChannelMessageSend(m.ChannelID, "Unknown command")
     }

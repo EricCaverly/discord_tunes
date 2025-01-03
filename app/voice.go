@@ -153,21 +153,20 @@ func play_audio(s *discordgo.Session, txt_chan string, guild_id string, arg stri
 
     // If this sessions is already playing music, stop here, we dont want the bot to play over itself
     if call.playing {
-    calls_mutx.Unlock()
+        calls_mutx.Unlock()
         return nil
     }
 
-    calls_mutx.Unlock()
     // For each song in the queue
-
     for {
-        calls_mutx.Lock()
 
+        // Make sure the call still exists and has not been disconnected
         if call, exists = calls[guild_id]; !exists {
             calls_mutx.Unlock()
             return nil
         }
 
+        // Only continue if there are more songs in the queue
         if len(calls[guild_id].queue) == 0 {
             calls_mutx.Unlock()
             return nil
@@ -306,8 +305,8 @@ func play_audio(s *discordgo.Session, txt_chan string, guild_id string, arg stri
         s.ChannelMessageSend(txt_chan, fmt.Sprintf("Stopped playing '%s' - %s", title, context.Cause(call.eas_ctx)))
 
         log.Printf("song complete / skipped / dc called - removed song from queue")
-    }
 
-    return nil
+        calls_mutx.Lock()
+    }
 }
 
