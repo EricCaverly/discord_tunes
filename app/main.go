@@ -16,9 +16,21 @@ type Settings struct {
     cmd_prefix byte
 }
 
+type Command struct {
+    help string
+    act func(*discordgo.Session, *discordgo.MessageCreate)
+}
+
 var (
     settings Settings
+    cmds map[string]Command = map[string]Command{
+        "join":{
+            help: "Joins the voice call of whoever sent the command",
+        }, 
+    }
 )
+
+
 
 
 func main() {
@@ -63,6 +75,21 @@ func main() {
 }
 
 
+func show_help(s *discordgo.Session, m *discordgo.MessageCreate) {
+    help_msg := `Help:
+- +join -> Joins the voice call of whoever sent the command
+- +dc -> Leaves the current voice call of the server if there is one
+- +play [link] -> Plays the specified youtube link
+- +skip -> Skips the currently playing song, moves onto the next in queue
+- +q -> Displays the current song queue
+- +dl -> Fetches the raw audio and sends to discord as a file upload. Returned format is a .m4a file
+- +pause -> Pauses the currently playing song
+- +resume -> Resumes the currently paused song
+`
+    s.ChannelMessageSend(m.ChannelID, help_msg)
+}
+
+
 func message_create(s *discordgo.Session, m *discordgo.MessageCreate) {
     // make sure the message has text, and that the bot is not the author of the message
     if len(m.Content) == 0 {
@@ -82,8 +109,17 @@ func message_create(s *discordgo.Session, m *discordgo.MessageCreate) {
     // Run the appropriate command function based on command
     cmd_sections := strings.Split(m.Content[1:], " ")
     switch cmd_sections[0] {
+    case "help":
+        show_help(s, m)
+    case "h":
+        show_help(s, m)
     case "join":
-        join_voice(s, guild_id, vc_id)
+        err := join_voice(s, guild_id, vc_id)
+        if err != nil {
+            s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Unable to join voice channel: %s", err.Error()))
+            log.Printf("joining vc: %s", err.Error())
+            return
+        }   
     case "dc":
         leave_voice(guild_id)
     case "play":
@@ -94,6 +130,10 @@ func message_create(s *discordgo.Session, m *discordgo.MessageCreate) {
         skip_cmd(s, m)
     case "q":
         queue_cmd(s, m)
+    case "pause":
+        set_paused(s, m, true)
+    case "resume":
+        set_paused(s, m, false)
     default:
         s.ChannelMessageSend(m.ChannelID, "Unknown command")
     }

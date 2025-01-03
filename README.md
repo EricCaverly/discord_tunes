@@ -31,3 +31,15 @@ You should now have the bot showing as online in your discord server, and it sho
 - [x] Song queues
 - [x] Show song queue
 - [x] Skip
+- [x] Pause and Resume
+
+## Commands
+
+- `+join` -> Joins the voice call of whoever sent the command
+- `+dc` -> Leaves the current voice call of the server if there is one
+- `+play [link]` -> Plays the specified youtube link
+- `+skip` -> Skips the currently playing song, moves onto the next in queue
+- `+q` -> Displays the current song queue
+- `+dl` -> Fetches the raw audio and sends to discord as a file upload. Returned format is a .m4a file
+- `+pause` -> Pauses the currently playing song
+- `+resume` -> Resumes the currently paused song

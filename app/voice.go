@@ -16,6 +16,7 @@ type Call struct {
     vc *discordgo.VoiceConnection
     playing bool
     should_exit bool
+    paused *bool
     bts_ctx context.Context
     bts_cancel context.CancelFunc
     eas_ctx context.Context
@@ -63,11 +64,34 @@ func vc_from_message(s *discordgo.Session, m *discordgo.MessageCreate) (string, 
 }
 
 
+func set_paused(s *discordgo.Session, m *discordgo.MessageCreate, val bool) {
+    calls_mutx.Lock()
+    call, exists := calls[m.GuildID]
+    if !exists {
+        s.ChannelMessageSend(m.ChannelID, "I'm not in a call, you can't tell me what to do with my life!")
+    }
+
+    if !call.playing {
+        s.ChannelMessageSend(m.ChannelID, "Nothing is currently playing")
+    }
+
+    *call.paused = val
+    switch val {
+    case false:
+        s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Resumed %s", call.queue[0].Title))
+    case true:
+        s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Paused %s, type `%cresume` to resume playing", call.queue[0].Title, settings.cmd_prefix))
+    }
+    calls[m.GuildID] = call
+    calls_mutx.Unlock()
+}
+
+
 func queue_cmd(s *discordgo.Session, m *discordgo.MessageCreate) {
     // Make sure the bot is in a call
     _, exists := calls[m.GuildID]
     if !exists {
-        s.ChannelMessageSend(m.ChannelID, "I'm not in a call")
+        s.ChannelMessageSend(m.ChannelID, "I'm not in a call, you don't live rent free in my head")
         return
     }
 
@@ -83,7 +107,7 @@ func skip_cmd(s *discordgo.Session, m *discordgo.MessageCreate) {
     // Make sure the bot is in a call
     _, exists := calls[m.GuildID]
     if !exists {
-        s.ChannelMessageSend(m.ChannelID, "I'm not in a call")
+        s.ChannelMessageSend(m.ChannelID, "I'm not in a call, don't get ahead of yourself")
         return
     }
 
@@ -99,13 +123,14 @@ func skip_cmd(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 func join_voice(s *discordgo.Session, guild_id string, vc_id string) error {
     // Check if the bot is already in a call
+    calls_mutx.Lock()
     _, exists := calls[guild_id]
     if exists {
         // If it is, leave the old call
-        log.Printf("already in a voice call, leaving old one\n")
-        leave_voice(guild_id)        
+        log.Printf("already in a voice call\n")
+        calls_mutx.Unlock()
+        return fmt.Errorf("already in a voice call")
     }
-    calls_mutx.Lock()
 
     // Join the new voice channel
     call, err := s.ChannelVoiceJoin(guild_id, vc_id, false, true) 
@@ -115,10 +140,13 @@ func join_voice(s *discordgo.Session, guild_id string, vc_id string) error {
     }
 
     // Create a new call object in the global calls map
+    paused := false
+
     calls[guild_id] = Call{
         vc: call,
         playing: false,
         should_exit: false,
+        paused: &paused,
         queue: []*youtube.Video{},
     }
     calls_mutx.Unlock()
@@ -179,7 +207,7 @@ func play_cmd(s *discordgo.Session, m *discordgo.MessageCreate, vc_id string, cm
     // Try to find the video specified in the command
     vid, err := get_video(cmd_sections[1])
     if err != nil {
-        s.ChannelMessageSend(m.ChannelID, "Could not find video, please try again")
+        s.ChannelMessageSend(m.ChannelID, "Could not find video, please try again (Node: Search is not currently implemented)")
         return 
     }
     log.Printf("found youtube video: [%s] - [%s]\n", vid.Title, vid.ID)
@@ -190,7 +218,7 @@ func play_cmd(s *discordgo.Session, m *discordgo.MessageCreate, vc_id string, cm
         log.Printf("not currently in a voice call, attempting to join %s\n", vc_id)
         err :=join_voice(s, m.GuildID, vc_id)
         if err != nil {
-            s.ChannelMessageSend(m.ChannelID, "unable to join voice channel")
+            s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Unable to join voice channel: %s", err.Error()))
             log.Printf("joining vc: %s", err.Error())
             return
         }
@@ -216,6 +244,7 @@ func play_cmd(s *discordgo.Session, m *discordgo.MessageCreate, vc_id string, cm
         err = play_audio(s, m.ChannelID, m.GuildID)
         if err != nil {
             log.Printf("error playing: %s\n", err.Error())
+            s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error while playing: %s", err.Error()))
         }
     } else {
         calls[m.GuildID] = call
@@ -303,7 +332,7 @@ func play_audio(s *discordgo.Session, txt_chan string, guild_id string) error {
         }
 
         // Get bytes from output of command, turn into int16 slices and send to encoding thread
-        short_chan := make(chan []int16, 20) 
+        short_chan := make(chan []int16, 30) 
         wg.Add(1)
         go func() {
             defer wg.Done()
@@ -319,32 +348,37 @@ func play_audio(s *discordgo.Session, txt_chan string, guild_id string) error {
         go func() {
             defer wg.Done()
             for calls[guild_id].playing {
-                    // Get PCM data from FFMPEG in appropriately sized chunks to be converted to OPUS
+                // Get PCM data from FFMPEG in appropriately sized chunks to be converted to OPUS
+                select {
+                case <- calls[guild_id].eas_ctx.Done():
+                    log.Printf("eas cancelled check 1\n")
+                    return
+                case pcm, ok := <- short_chan:
+                    if !ok {
+                        return
+                    }
+
+                    // Encode into opus
+                    opus, err := opus_enc.Encode(pcm, audio_frame_size, audio_max_bytes)
+                    if err != nil {
+                        log.Printf("error while doing eas: %s\n", err.Error())
+                        return
+                    }
+                    
+                    var paused *bool = calls[guild_id].paused
+                    for *paused {
+                        time.Sleep(20 * time.Millisecond)
+                    }
+
+                    // Send to discord if the thread has not been cancelled
                     select {
                     case <- calls[guild_id].eas_ctx.Done():
-                        log.Printf("eas cancelled check 1\n")
+                        log.Printf("eas cancelled check 2\n")
                         return
-                    case pcm, ok := <- short_chan:
-                        if !ok {
-                            return
-                        }
-
-                        // Encode into opus
-                        opus, err := opus_enc.Encode(pcm, audio_frame_size, audio_max_bytes)
-                        if err != nil {
-                            log.Printf("error while doing eas: %s\n", err.Error())
-                            return
-                        }
-
-                        // Send to discord if the thread has not been cancelled
-                        select {
-                        case <- calls[guild_id].eas_ctx.Done():
-                            log.Printf("eas cancelled check 2\n")
-                            return
-                        case call.vc.OpusSend <- opus:
-                            continue
-                        }
+                    case call.vc.OpusSend <- opus:
+                        continue
                     }
+                }
             }
 
             log.Printf("exited eas loop\n")
@@ -388,9 +422,10 @@ func play_audio(s *discordgo.Session, txt_chan string, guild_id string) error {
         calls[guild_id] = call
         calls_mutx.Unlock()
 
+        // Inform users we are done playing the song and why
         s.ChannelMessageSend(txt_chan, fmt.Sprintf("Stopped playing '%s' - %s", title, context.Cause(call.eas_ctx)))
 
-        log.Printf("song complete / skipped / dc called - removed song from queue")
+        log.Printf("stopped playing: %s", context.Cause(call.eas_ctx))
     }
 }
 
