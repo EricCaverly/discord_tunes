@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,27 +41,27 @@ const (
 )
 
 
-func vc_from_message(s *discordgo.Session, m *discordgo.MessageCreate) (string, string, error)   {
+func vc_from_message(s *discordgo.Session, m *discordgo.MessageCreate) (string, error)   {
     // Text Channel
     c, err := s.State.Channel(m.ChannelID)
     if err != nil {
-        return "", "", fmt.Errorf("could not find text channel message was sent in")
+        return "", fmt.Errorf("could not find text channel message was sent in")
     }
 
     // Find guild
     g, err := s.State.Guild(c.GuildID)
     if err != nil {
-        return "", "", fmt.Errorf("could not find guild")
+        return "", fmt.Errorf("could not find guild")
     }
 
     // Find voice state the author of txt message is in
     for _, vs := range g.VoiceStates {
         if vs.UserID == m.Author.ID {
-            return g.ID, vs.ChannelID, nil
+            return vs.ChannelID, nil
         }
     }
     
-    return "", "", fmt.Errorf("author is not in an accessible voice channel")
+    return "", fmt.Errorf("author is not in an accessible voice channel")
 }
 
 
@@ -197,7 +198,9 @@ func leave_voice(guild_id string) {
 }
 
 
-func play_cmd(s *discordgo.Session, m *discordgo.MessageCreate, vc_id string, cmd_sections []string) {
+func play_cmd(s *discordgo.Session, m *discordgo.MessageCreate) {
+    cmd_sections := strings.Split(m.Content[1:], " ")
+
     // Make sure the user has only put the play command and one argument
     if len(cmd_sections) != 2 {
         s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Invalid syntax: use `%cplay [link]`", settings.cmd_prefix))
@@ -215,8 +218,13 @@ func play_cmd(s *discordgo.Session, m *discordgo.MessageCreate, vc_id string, cm
 
     // Make sure the call exists, if it doesn't, try to join the voice channel
     if _, exists := calls[m.GuildID]; !exists {
-        log.Printf("not currently in a voice call, attempting to join %s\n", vc_id)
-        err :=join_voice(s, m.GuildID, vc_id)
+        log.Printf("not currently in a voice call, attempting to join\n")
+        vc_id, err := vc_from_message(s, m)
+        if err != nil {
+            s.ChannelMessageSend(m.ChannelID, "You are not currently within a voice call")
+            log.Printf("could not find vc: %s\n", err.Error())
+        }
+        err = join_voice(s, m.GuildID, vc_id)
         if err != nil {
             s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Unable to join voice channel: %s", err.Error()))
             log.Printf("joining vc: %s", err.Error())

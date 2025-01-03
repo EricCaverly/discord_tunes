@@ -23,22 +23,80 @@ type Command struct {
 
 var (
     settings Settings
-    cmds map[string]Command = map[string]Command{
-        "join":{
-            help: "Joins the voice call of whoever sent the command",
-        }, 
-    }
+    cmds map[string]Command 
 )
 
-
-
+func build_commands() {
+    cmds = map[string]Command{
+        "help": {
+            help: "Display help message",
+            act: show_help,
+        },
+        "dl": {
+            help: "Pipes audio file from youtube to discord as file upload",
+            act: download_cmd,
+        },
+        "join":{
+            help: "Joins the voice call of whoever sent the command",
+            act: func(s *discordgo.Session, m *discordgo.MessageCreate) {
+                vc_id, err := vc_from_message(s, m)
+                if err != nil {
+                    s.ChannelMessageSend(m.ChannelID, "You are not in a voice channel")
+                    log.Printf("could not find vc: %s\n", err.Error())
+                    return
+                }
+                err = join_voice(s, m.GuildID, vc_id)
+                if err != nil {
+                    s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Unable to join voice channel: %s", err.Error()))
+                    log.Printf("joining vc: %s", err.Error())
+                    return
+                }   
+            },
+        }, 
+        "dc": {
+            help: "Leaves the current voice call of the server",
+            act: func(s *discordgo.Session, m *discordgo.MessageCreate) {
+                leave_voice(m.GuildID)
+            },
+        },
+        "play": {
+            help: "Plays the specified youtube link",
+            act: play_cmd,
+        },
+        "q": {
+            help: "Display the current queue",
+            act: queue_cmd,
+        },
+        "skip": {
+            help: "Skip the currently playing song",
+            act: skip_cmd,
+        },
+        "pause": {
+            help: "Pause the currently playing song",
+            act: func(s *discordgo.Session, m *discordgo.MessageCreate) {
+                set_paused(s, m, true)
+            },
+        },
+        "resume": {
+            help: "Resume the currently paused song",
+            act: func(s *discordgo.Session, m *discordgo.MessageCreate) {
+                set_paused(s, m, false)
+            },
+        },
+    }
+}
 
 func main() {
+
+    // Load settings from environment variables
     var err error
     settings, err = load_settings()
     if err != nil {
         log.Fatalf("error loading settings: %s\n", err.Error())
     }
+
+    // Build the commands hashmap
+    build_commands()
 
     // Read secret file
     tok_file_contents, err := os.ReadFile(settings.token_secret_path)
@@ -76,16 +134,10 @@ func main() {
 
 
 func show_help(s *discordgo.Session, m *discordgo.MessageCreate) {
-    help_msg := `Help:
-- +join -> Joins the voice call of whoever sent the command
-- +dc -> Leaves the current voice call of the server if there is one
-- +play [link] -> Plays the specified youtube link
-- +skip -> Skips the currently playing song, moves onto the next in queue
-- +q -> Displays the current song queue
-- +dl -> Fetches the raw audio and sends to discord as a file upload. Returned format is a .m4a file
-- +pause -> Pauses the currently playing song
-- +resume -> Resumes the currently paused song
-`
+    var help_msg string = "Help:"
+    for cmd, info := range cmds {
+        help_msg+=fmt.Sprintf("\n`%c%s` -> %s", settings.cmd_prefix, cmd, info.help)
+    }
     s.ChannelMessageSend(m.ChannelID, help_msg)
 }
 
@@ -101,42 +153,15 @@ func message_create(s *discordgo.Session, m *discordgo.MessageCreate) {
         return
     }
 
-    guild_id, vc_id, err := vc_from_message(s, m)
-    if err != nil {
-        log.Printf("could not find vc: %s\n", err.Error())
-    }
-
     // Run the appropriate command function based on command
     cmd_sections := strings.Split(m.Content[1:], " ")
-    switch cmd_sections[0] {
-    case "help":
-        show_help(s, m)
-    case "h":
-        show_help(s, m)
-    case "join":
-        err := join_voice(s, guild_id, vc_id)
-        if err != nil {
-            s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Unable to join voice channel: %s", err.Error()))
-            log.Printf("joining vc: %s", err.Error())
-            return
-        }   
-    case "dc":
-        leave_voice(guild_id)
-    case "play":
-        play_cmd(s, m, vc_id, cmd_sections)
-    case "dl":
-        download_cmd(s, m, cmd_sections)
-    case "skip":
-        skip_cmd(s, m)
-    case "q":
-        queue_cmd(s, m)
-    case "pause":
-        set_paused(s, m, true)
-    case "resume":
-        set_paused(s, m, false)
-    default:
+
+    cmd, valid := cmds[cmd_sections[0]]
+    if !valid {
         s.ChannelMessageSend(m.ChannelID, "Unknown command")
+        return
     }
+    cmd.act(s, m)
 }
 
 

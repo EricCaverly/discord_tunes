@@ -11,7 +11,9 @@ import (
 )
 
 
-func download_cmd(s *discordgo.Session, m *discordgo.MessageCreate, cmd_sections []string) {
+func download_cmd(s *discordgo.Session, m *discordgo.MessageCreate) {
+    cmd_sections := strings.Split(m.Content[1:], " ")
+
     // Make sure command is formatted correctly
     if len(cmd_sections) != 2 {
         s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("invalid syntax: use `%cdl [link]`", settings.cmd_prefix))
