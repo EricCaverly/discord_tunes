@@ -20,6 +20,7 @@ var (
     settings Settings
 )
 
+
 func main() {
     var err error
     settings, err = load_settings()
@@ -86,58 +87,13 @@ func message_create(s *discordgo.Session, m *discordgo.MessageCreate) {
     case "dc":
         leave_voice(guild_id)
     case "play":
-        // Make sure the user has only put the play command and one argument
-        if len(cmd_sections) != 2 {
-            s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("invalid syntax: use `%cplay [link]`", settings.cmd_prefix))
-            return
-        }
-        // Make sure the call exists, if it doesn't, try to join the voice channel
-        if _, exists := calls[guild_id]; !exists {
-            join_voice(s, guild_id, vc_id)
-        }
-
-        // Call the play audio function
-        err := play_audio(s, m.ChannelID, guild_id, cmd_sections[1])
-        if err != nil {
-            log.Printf("error playing: %s\n", err.Error())
-        }
+        play_cmd(s, m, vc_id, cmd_sections)
     case "dl":
-        // Make sure command is formatted correctly
-        if len(cmd_sections) != 2 {
-            s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("invalid syntax: use `%cdl [link]`", settings.cmd_prefix))
-            return
-        }
-
-        // Get the file and upload it to discord
-        get_file(s, m.ChannelID, cmd_sections[1]) 
+        download_cmd(s, m, cmd_sections)
     case "skip":
-        // Make sure the bot is in a call
-        _, exists := calls[guild_id]
-        if !exists {
-            s.ChannelMessageSend(m.ChannelID, "I'm not in a call")
-            return
-        }
-
-        // Cancel all child threads that are being used to play the current song
-        calls[guild_id].ffm_cancel()
-        calls[guild_id].eas_cancel(fmt.Errorf("Skipped"))
-        calls[guild_id].bts_cancel()
-        // From here, the existing play_audio thread will do the rest
-
-        log.Printf("skip command executed\n")
+        skip_cmd(s, m)
     case "q":
-        // Make sure the bot is in a call
-        _, exists := calls[guild_id]
-        if !exists {
-            s.ChannelMessageSend(m.ChannelID, "I'm not in a call")
-            return
-        }
-
-        var list string
-        for _, vid := range calls[guild_id].queue {
-            list+=fmt.Sprintf("\n(%s - [%v])", vid.Title, vid.Duration)
-        }
-        s.ChannelMessageSend(m.ChannelID, "Queue (including currently playing): "+list)
+        queue_cmd(s, m)
     default:
         s.ChannelMessageSend(m.ChannelID, "Unknown command")
     }

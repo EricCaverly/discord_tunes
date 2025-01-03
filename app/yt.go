@@ -10,6 +10,20 @@ import (
 	"github.com/kkdai/youtube/v2"
 )
 
+
+func download_cmd(s *discordgo.Session, m *discordgo.MessageCreate, cmd_sections []string) {
+    // Make sure command is formatted correctly
+    if len(cmd_sections) != 2 {
+        s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("invalid syntax: use `%cdl [link]`", settings.cmd_prefix))
+        return
+    }
+
+    // Get the file and upload it to discord
+    get_file(s, m.ChannelID, cmd_sections[1]) 
+    
+}
+
+
 func get_file(s *discordgo.Session, channel_id string, argument string) {
     // Get the video based on the argument
     video, err := get_video(argument) 
@@ -29,6 +43,7 @@ func get_file(s *discordgo.Session, channel_id string, argument string) {
     s.ChannelMessageSend(channel_id, fmt.Sprintf("Here is the audio for %s", video.Title))
     s.ChannelFileSend(channel_id, "song.m4a", stream)
 }
+
 
 func get_video(argument string) (*youtube.Video, error) {
     client := youtube.Client{}
@@ -58,6 +73,7 @@ func get_video(argument string) (*youtube.Video, error) {
     return video, nil
     
 }
+
 
 func get_audio_stream(video *youtube.Video) (io.ReadCloser, error) {
     client := youtube.Client{}

@@ -31,14 +31,13 @@ func convert_m4a_pcm(audio_stream io.ReadCloser, ctx context.Context) (io.ReadCl
     if err != nil {
         return nil, fmt.Errorf("getting stdout: %s", err.Error())
     }
-    log.Printf("got pipes\n")
 
     // Start the command without waiting for it to complete
     err = c.Start()
     if err != nil {
         return nil, fmt.Errorf("ffmpeg: %s\n", err.Error())
     }
-    log.Printf("started command\n")
+    log.Printf("started ffmpeg command\n")
 
     // In another thread, copy audio stream from youtube into ffmpeg's input directly
     go func() {
@@ -60,7 +59,7 @@ func pcm_bts(byte_stream io.ReadCloser, short_chan chan []int16, guild_id string
         // Make sure this function has not been cancelled
         select {
         case <- calls[guild_id].bts_ctx.Done():
-            log.Printf("pcm cancelled\n")
+            log.Printf("bts cancelled check 1\n")
             return nil
         default:
             // Make a buffer for audio data that is just the right amount of size for the amount of PCM data that can be encoded into an OPUS frame
@@ -89,7 +88,7 @@ func pcm_bts(byte_stream io.ReadCloser, short_chan chan []int16, guild_id string
                 continue
             // Check if this thread was cancelled via context
             case <- calls[guild_id].bts_ctx.Done():
-                log.Printf("cancelled in second select\n")
+                log.Printf("bts cancelled check 2\n")
                 return nil
             }
         }
