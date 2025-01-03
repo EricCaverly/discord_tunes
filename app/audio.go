@@ -70,11 +70,8 @@ func pcm_bts(byte_stream io.ReadCloser, short_chan chan []int16, guild_id string
 
             // if we got to EOF, break out of the loop
             if err == io.EOF {
-                break
-
-            // If we got unexpected EOF, still some data to send, so just dont repeat again
-            } else if err == io.ErrUnexpectedEOF {
-                reading = false
+                log.Printf("EOF reached in FFMPEG\n")
+                return nil
 
             // otherwise, there was an actual problem
             } else if err != nil {

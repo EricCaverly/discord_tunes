@@ -210,27 +210,31 @@ func play_audio(s *discordgo.Session, txt_chan string, guild_id string, arg stri
         go func() {
             defer wg.Done()
             for calls[guild_id].playing {
-                select {
-                case <- calls[guild_id].eas_ctx.Done():
-                    log.Printf("eas cancelled\n")
-                    return
-                default:
                     // Get PCM data from FFMPEG in appropriately sized chunks to be converted to OPUS
-                    pcm, ok := <- short_chan
-                    if !ok {
+                    select {
+                    case <- calls[guild_id].eas_ctx.Done():
                         return
-                    }
+                    case pcm, ok := <- short_chan:
+                        if !ok {
+                            return
+                        }
 
-                    // Encode into opus
-                    opus, err := opus_enc.Encode(pcm, audio_frame_size, audio_max_bytes)
-                    if err != nil {
-                        log.Printf("error while doing eas: %s\n", err.Error())
-                        return
-                    }
+                        // Encode into opus
+                        opus, err := opus_enc.Encode(pcm, audio_frame_size, audio_max_bytes)
+                        if err != nil {
+                            log.Printf("error while doing eas: %s\n", err.Error())
+                            return
+                        }
 
-                    // Send to discord
-                    call.vc.OpusSend <- opus
-                }
+                        // Send to discord if the thread has not been cancelled
+                        select {
+                        case <- calls[guild_id].eas_ctx.Done():
+                            log.Printf("eas cancelled\n")
+                            return
+                        case call.vc.OpusSend <- opus:
+                            continue
+                        }
+                    }
             }
 
             log.Printf("exited eas loop\n")
