@@ -223,6 +223,7 @@ func play_cmd(s *discordgo.Session, m *discordgo.MessageCreate) {
         if err != nil {
             s.ChannelMessageSend(m.ChannelID, "You are not currently within a voice call")
             log.Printf("could not find vc: %s\n", err.Error())
+            return
         }
         err = join_voice(s, m.GuildID, vc_id)
         if err != nil {
