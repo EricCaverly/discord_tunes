@@ -7,8 +7,6 @@ services:
     secrets:
       - source: toksec
         target: toksec 
-    volumes:
-      - ./output:/app/output
 
 secrets:
   toksec:

@@ -72,7 +72,7 @@ func pcm_bts(byte_stream io.ReadCloser, short_chan chan []int16, guild_id string
             // if we got to EOF, break out of the loop
             if err == io.EOF || err == io.ErrUnexpectedEOF {
                 log.Printf("EOF reached in FFMPEG\n")
-                calls[guild_id].eas_cancel()
+                calls[guild_id].eas_cancel(fmt.Errorf("Song finished"))
                 calls[guild_id].ffm_cancel()
                 return nil
 

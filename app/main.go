@@ -120,7 +120,7 @@ func message_create(s *discordgo.Session, m *discordgo.MessageCreate) {
 
         // Cancel all child threads that are being used to play the current song
         calls[guild_id].ffm_cancel()
-        calls[guild_id].eas_cancel()
+        calls[guild_id].eas_cancel(fmt.Errorf("Skipped"))
         calls[guild_id].bts_cancel()
         // From here, the existing play_audio thread will do the rest
 
