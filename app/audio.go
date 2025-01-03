@@ -43,6 +43,7 @@ func convert_m4a_pcm(audio_stream io.ReadCloser, ctx context.Context) (io.ReadCl
     // In another thread, copy audio stream from youtube into ffmpeg's input directly
     go func() {
         io.Copy(cstdin, audio_stream)
+        cstdin.Close()
     }()
     
     // Return the stdout reader
@@ -69,8 +70,10 @@ func pcm_bts(byte_stream io.ReadCloser, short_chan chan []int16, guild_id string
             err := binary.Read(byte_stream, binary.LittleEndian, &buf)
 
             // if we got to EOF, break out of the loop
-            if err == io.EOF {
+            if err == io.EOF || err == io.ErrUnexpectedEOF {
                 log.Printf("EOF reached in FFMPEG\n")
+                calls[guild_id].eas_cancel()
+                calls[guild_id].ffm_cancel()
                 return nil
 
             // otherwise, there was an actual problem
