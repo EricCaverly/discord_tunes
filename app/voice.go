@@ -36,7 +36,8 @@ const (
     audio_chan int = 2
     audio_frame_size int = 960
     audio_sample_rate int = 48000
-    audio_bitrate int = 64
+    //audio_bitrate int = 64
+    audio_bitrate int = 128
     audio_max_bytes int = (audio_frame_size * audio_chan) * 2
 )
 
@@ -302,7 +303,7 @@ func play_audio(s *discordgo.Session, txt_chan string, guild_id string) error {
         }
 
         // Create a new opus encoder that econdes pcm data into opus packets for discord
-        opus_enc, err := gopus.NewEncoder(audio_sample_rate, audio_chan, gopus.Voip)
+        opus_enc, err := gopus.NewEncoder(audio_sample_rate, audio_chan, gopus.Audio)
         if err != nil {
             calls_mutx.Unlock()
             return fmt.Errorf("unable to make encoder: %s", err.Error())
