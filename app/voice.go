@@ -71,10 +71,14 @@ func set_paused(s *discordgo.Session, m *discordgo.MessageCreate, val bool) {
     call, exists := calls[m.GuildID]
     if !exists {
         s.ChannelMessageSend(m.ChannelID, "I'm not in a call, you can't tell me what to do with my life!")
+        calls_mutx.Unlock()
+        return
     }
 
     if !call.playing {
         s.ChannelMessageSend(m.ChannelID, "Nothing is currently playing")
+        calls_mutx.Unlock()
+        return
     }
 
     *call.paused = val
@@ -163,6 +167,7 @@ func leave_voice(guild_id string) {
     calls_mutx.Lock()
     call, exists := calls[guild_id]
     if !exists {
+        calls_mutx.Unlock()
         return
     }
 
